@@ -1,0 +1,78 @@
+# Allora macOS Deployment - .gitignore
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Ansible
+*.retry
+ansible.log
+*.pyc
+__pycache__/
+.ansible/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Sensitive wallet information
+*.info
+*_readable.txt
+wallets/
+.allorad/
+
+# Environment variables
+.env
+.env.local
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
+
+# OS generated files
+Icon?
+ehthumbs.db
+Thumbs.db
+
+# Node modules (if any JavaScript tools are added)
+node_modules/
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+
+# Local test files
+test_*
+debug_*
+
+# Docker
+.dockerignore
+
+# Homebrew
+Brewfile.lock.json
+
+# Secrets and keys
+*.key
+*.pem
+*.p12
+secrets/

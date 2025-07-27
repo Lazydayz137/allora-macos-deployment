@@ -1,0 +1,123 @@
+---
+- name: Create Allora Wallet on macOS
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+
+  vars_prompt:
+    - name: wallet_name
+      prompt: "Enter your wallet name"
+      private: false
+
+  vars:
+    allora_home: "{{ ansible_env.HOME }}/.allorad"
+    allora_chain_dir: "{{ ansible_env.HOME }}/allora-chain"
+    allorad_binary: "{{ ansible_env.HOME }}/go/bin/allorad"
+
+  tasks:
+    - name: Check if allorad is installed
+      stat:
+        path: "{{ allorad_binary }}"
+      register: allorad_exists
+
+    - name: Build allorad if not found
+      shell: |
+        cd {{ allora_chain_dir }}
+        make install
+      when: not allorad_exists.stat.exists
+
+    - name: Ensure wallet directory exists
+      file:
+        path: "{{ allora_home }}/wallets"
+        state: directory
+        mode: '0755'
+
+    - name: Check if wallet already exists
+      shell: "{{ allorad_binary }} keys list --keyring-backend test --output json | jq -r '.[].name'"
+      register: existing_wallets
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if wallet already exists
+      fail:
+        msg: "Wallet '{{ wallet_name }}' already exists. Choose a different name."
+      when: wallet_name in existing_wallets.stdout_lines
+
+    - name: Create new wallet and store output
+      shell: |
+        "{{ allorad_binary }}" keys add "{{ wallet_name }}" --keyring-backend test --output json > "{{ allora_home }}/wallets/{{ wallet_name }}.info"
+      register: wallet_creation
+
+    - name: Read wallet information
+      slurp:
+        src: "{{ allora_home }}/wallets/{{ wallet_name }}.info"
+      register: wallet_info_file
+
+    - name: Parse wallet info
+      set_fact:
+        wallet_info: "{{ wallet_info_file.content | b64decode | from_json }}"
+
+    - name: Display wallet information
+      debug:
+        msg: |
+          =====================================
+          🎉 Wallet Created Successfully!
+          =====================================
+          Wallet Name: {{ wallet_name }}
+          Address: {{ wallet_info.address }}
+          
+          ⚠️  IMPORTANT: Save the following information securely!
+          
+          🔑 Mnemonic (Recovery Phrase):
+          {{ wallet_info.mnemonic }}
+          
+          📁 Wallet info saved to: {{ allora_home }}/wallets/{{ wallet_name }}.info
+          =====================================
+
+    - name: Create human-readable wallet info file
+      copy:
+        content: |
+          Allora Wallet Information
+          ========================
+          Wallet Name: {{ wallet_name }}
+          Created: {{ ansible_date_time.iso8601 }}
+          
+          Address: {{ wallet_info.address }}
+          Public Key: {{ wallet_info.pubkey }}
+          
+          MNEMONIC (RECOVERY PHRASE):
+          {{ wallet_info.mnemonic }}
+          
+          ⚠️  IMPORTANT: Keep this information secure and private!
+          This is the only way to recover your wallet if you lose access.
+          
+          Usage Commands:
+          ===============
+          # Check balance
+          {{ allorad_binary }} query bank balances {{ wallet_info.address }} --node https://allora-rpc.testnet.allora.network/
+          
+          # List all wallets
+          {{ allorad_binary }} keys list --keyring-backend test
+        dest: "{{ allora_home }}/wallets/{{ wallet_name }}_readable.txt"
+        mode: '0600'
+
+    - name: Display next steps
+      debug:
+        msg: |
+          =====================================
+          📋 NEXT STEPS:
+          =====================================
+          1. Your wallet has been created and saved to:
+             • {{ allora_home }}/wallets/{{ wallet_name }}.info
+             • {{ allora_home }}/wallets/{{ wallet_name }}_readable.txt
+          
+          2. 💰 Your wallet already has 2 billion uallo tokens for testing!
+             Check balance: {{ allorad_binary }} query bank balances {{ wallet_info.address }} --node https://allora-rpc.testnet.allora.network/
+          
+          3. 🚀 Ready to deploy nodes:
+             • Validator: ansible-playbook playbooks/install_validator_node_macos.yml
+             • Worker: ansible-playbook playbooks/install_worker_node_macos.yml
+          
+          4. 📊 Manage services:
+             ./scripts/manage_services.sh status all
+          =====================================

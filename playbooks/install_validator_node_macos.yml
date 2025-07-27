@@ -1,0 +1,180 @@
+---
+- name: Deploy Allora Validator Node on macOS using launchd
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+
+  vars_prompt:
+    - name: moniker
+      prompt: "Enter your node name"
+      private: false
+
+  vars:
+    NETWORK: allora-testnet-1
+    GENESIS_URL: "https://raw.githubusercontent.com/allora-network/networks/main/allora-testnet-1/genesis.json"
+    SEEDS_URL: "https://raw.githubusercontent.com/allora-network/networks/main/{{ NETWORK }}/seeds.txt"
+    PEERS_URL: "https://raw.githubusercontent.com/allora-network/networks/main/{{ NETWORK }}/peers.txt"
+    KEYRING_BACKEND: "test"
+    DENOM: uallo
+    ALLORA_HOME: "{{ ansible_env.HOME }}/.allorad"
+    ALLORA_CHAIN_DIR: "{{ ansible_env.HOME }}/allora-chain"
+    ALLORA_VERSION: "v0.5.0"
+    P2P_PORT: 26656
+    RPC_PORT: 26657
+    GRPC_PORT: 9090
+    GRPC_WEB_PORT: 9091
+    SEEDS: "720d83b52611c64d119adfc4d08d2e85885d8c74@allora-testnet-seed.itrocket.net:27656"
+    PEERS: "a8cde2de31410d896668e53446495a4a68c4c24f@allora-testnet-peer.itrocket.net:27656"
+    PLIST_PATH: "{{ ansible_env.HOME }}/Library/LaunchAgents/com.allora.validator.plist"
+
+  tasks:
+    - name: Display initial progress
+      debug:
+        msg: "Starting Allora validator node installation on macOS. Progress: 5%"
+
+    - name: Check if allorad is installed
+      command: which allorad
+      register: allorad_check
+      failed_when: false
+      changed_when: false
+
+    - name: Build allorad if not found
+      shell: |
+        cd {{ ALLORA_CHAIN_DIR }}
+        make install
+      when: allorad_check.rc != 0
+
+    - name: Create logs directory
+      file:
+        path: "{{ ansible_env.HOME }}/Library/Logs"
+        state: directory
+        mode: '0755'
+
+    - name: Create LaunchAgents directory
+      file:
+        path: "{{ ansible_env.HOME }}/Library/LaunchAgents"
+        state: directory
+        mode: '0755'
+
+    - name: Stop existing service if running
+      shell: launchctl unload {{ PLIST_PATH }}
+      ignore_errors: yes
+
+    - name: Remove existing configuration
+      file:
+        path: "{{ ALLORA_HOME }}"
+        state: absent
+
+    - name: Create ALLORA_HOME directory
+      file:
+        path: "{{ ALLORA_HOME }}"
+        state: directory
+        mode: '0755'
+
+    - name: Initialize the node
+      shell: |
+        export PATH=$PATH:{{ ansible_env.HOME }}/go/bin
+        allorad --home {{ ALLORA_HOME }} init {{ moniker }} --chain-id {{ NETWORK }}
+      environment:
+        PATH: "{{ ansible_env.PATH }}:{{ ansible_env.HOME }}/ go/bin"
+
+    - name: Configure allorad client
+      shell: |
+        {{ ansible_env.HOME }}/go/bin/allorad --home={{ ALLORA_HOME }} config set client chain-id {{ NETWORK }}
+        {{ ansible_env.HOME }}/go/bin/allorad --home={{ ALLORA_HOME }} config set client keyring-backend {{ KEYRING_BACKEND }}
+      environment:
+        PATH: "{{ ansible_env.PATH }}:{{ ansible_env.HOME }}/go/bin"
+
+    - name: Display progress after node initialization
+      debug:
+        msg: "Progress: 35% - Node initialized"
+
+    - name: Download genesis file
+      get_url:
+        url: "{{ GENESIS_URL }}"
+        dest: "{{ ALLORA_HOME }}/config/genesis.json"
+
+    - name: Configure pruning to save storage
+      shell: |
+        sed -i '' \
+            -e "s/^pruning *=.*/pruning = \"custom\"/" \
+            -e "s/^pruning-keep-recent *=.*/pruning-keep-recent = \"100\"/" \
+            -e "s/^pruning-keep-every *=.*/pruning-keep-every = \"0\"/" \
+            -e "s/^pruning-interval *=.*/pruning-interval = \"50\"/" \
+            "{{ ALLORA_HOME }}/config/app.toml"
+
+    - name: Configure indexer to null
+      shell: |
+        sed -i '' "s/^indexer *=.*/indexer = \"null\"/" {{ ALLORA_HOME }}/config/config.toml
+
+    - name: Configure ports in config.toml
+      shell: |
+        sed -i '' "s/^laddr = \"tcp:\/\/0.0.0.0:26656\"/laddr = \"tcp:\/\/0.0.0.0:{{ P2P_PORT }}\"/" {{ ALLORA_HOME }}/config/config.toml
+        sed -i '' "s/^laddr = \"tcp:\/\/127.0.0.1:26657\"/laddr = \"tcp:\/\/127.0.0.1:{{ RPC_PORT }}\"/" {{ ALLORA_HOME }}/config/config.toml
+
+    - name: Configure seeds and peers
+      shell: |
+        sed -i '' -e '/^\[p2p\]/,/^\[/{s/^[[:space:]]*seeds *=.*/seeds = "{{ SEEDS }}"/;}' \
+                   -e '/^\[p2p\]/,/^\[/{s/^[[:space:]]*persistent_peers *=.*/persistent_peers = "{{ PEERS }}"/;}' {{ ALLORA_HOME }}/config/config.toml
+
+    - name: Configure client.toml
+      shell: |
+        sed -i '' "s/^node = \"tcp:\/\/localhost:26657\"/node = \"tcp:\/\/localhost:{{ RPC_PORT }}\"/" {{ ALLORA_HOME }}/config/client.toml
+
+    - name: Configure prometheus
+      shell: |
+        sed -i '' -e "s/prometheus = false/prometheus = true/" {{ ALLORA_HOME }}/config/config.toml
+
+    - name: Display progress after configuration
+      debug:
+        msg: "Progress: 65% - Node configured"
+
+    - name: Create launchd service file
+      template:
+        src: ../templates/com.allora.validator.plist.j2
+        dest: "{{ PLIST_PATH }}"
+
+    - name: Load and start the service
+      shell: launchctl load {{ PLIST_PATH }}
+
+    - name: Display service status
+      shell: launchctl list | grep allora
+      register: service_status
+      ignore_errors: yes
+
+    - name: Display final progress
+      debug:
+        msg: |
+          =====================================
+          🎉 Allora Validator Node Setup Complete!
+          =====================================
+          Progress: 100% - Installation completed
+          
+          Node Name: {{ moniker }}
+          Network: {{ NETWORK }}
+          Home Directory: {{ ALLORA_HOME }}
+          
+          Service Status:
+          {{ service_status.stdout if service_status.rc == 0 else 'Service not found - check logs' }}
+          
+          USEFUL COMMANDS:
+          =====================================
+          # Check service status
+          launchctl list | grep allora
+          
+          # View logs
+          tail -f {{ ansible_env.HOME }}/Library/Logs/allora-validator.log
+          tail -f {{ ansible_env.HOME }}/Library/Logs/allora-validator-error.log
+          
+          # Stop the service
+          launchctl unload {{ PLIST_PATH }}
+          
+          # Start the service
+          launchctl load {{ PLIST_PATH }}
+          
+          # Check node status
+          {{ ansible_env.HOME }}/go/bin/allorad status --home {{ ALLORA_HOME }}
+          
+          # Check if node is syncing
+          {{ ansible_env.HOME }}/go/bin/allorad status --home {{ ALLORA_HOME }} | jq .SyncInfo
+          =====================================
