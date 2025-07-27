@@ -1,0 +1,46 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    home_dir: "{{ ansible_env.HOME }}"
+    HF_REPO_DIR: "{{ ansible_env.HOME }}/allora-huggingface-walkthrough"
+    
+  tasks:
+    - name: Ensure worker logs directory exists
+      file:
+        path: "{{ home_dir }}/allora-macos-deployment/logs"
+        state: directory
+        mode: '0755'
+
+    - name: Ensure LaunchAgents directory exists
+      file:
+        path: "{{ home_dir }}/Library/LaunchAgents"
+        state: directory
+        mode: '0755'
+
+    - name: Deploy worker plist for launchd
+      template:
+        src: "templates/com.allora.worker.plist.j2"
+        dest: "{{ home_dir }}/Library/LaunchAgents/com.allora.worker.plist"
+        mode: '0644'
+      notify: reload worker service
+
+    - name: Load worker service
+      command: "launchctl load {{ home_dir }}/Library/LaunchAgents/com.allora.worker.plist"
+      ignore_errors: yes
+
+    - name: Start worker service
+      command: "launchctl start com.allora.worker"
+      register: start_result
+      ignore_errors: yes
+
+    - name: Display worker service start result
+      debug:
+        msg: "Worker service start result: {{ start_result }}"
+
+  handlers:
+    - name: reload worker service
+      shell: |
+        launchctl unload {{ home_dir }}/Library/LaunchAgents/com.allora.worker.plist || true
+        launchctl load {{ home_dir }}/Library/LaunchAgents/com.allora.worker.plist
